@@ -140,26 +140,3 @@ app.post('/desactivar-reporte', validarToken, (req, res) => {
   });
 });
 
-const express = require('express');
-const app = express();
-
-// Middleware para JSON
-app.use(express.json());
-
-// Endpoint raíz
-app.get('/', (req, res) => {
-  res.send('API funcionando 🚀');
-});
-
-// Ejemplo de login (ya lo tienes)
-app.post('/login', (req, res) => {
-  // tu lógica de autenticación
-  res.json({ token: 'ejemplo-token' });
-});
-
-// Puerto dinámico para Railway/AWS
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-});
-
