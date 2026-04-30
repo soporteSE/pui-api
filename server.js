@@ -69,13 +69,60 @@ app.post('/login', async (req, res) => {
 });
 
 // Ejemplo de endpoint protegido
-app.post('/activar-reporte', validarToken, (req, res) => {
+const axios = require('axios'); // <-- para hacer los POST internos
+
+app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp } = req.body;
+
   if (!id || !curp) {
     return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
   }
-  return res.json({ mensaje: 'Reporte activado correctamente', datos: { id, curp } });
+
+  try {
+    // 🔹 Buscar CURP en la base de datos
+    const [rows] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
+
+    if (rows.length > 0) {
+      // 🔹 Si se encuentra, notificar coincidencia
+      const coincidencia = rows[0];
+      await axios.post('http://localhost:3000/notificar-coincidencia', {
+        curp: coincidencia.curp,
+        nombre: coincidencia.nombre,
+        primer_apellido: coincidencia.primer_apellido,
+        segundo_apellido: coincidencia.segundo_apellido,
+        fase_busqueda: "1",
+        tipo_evento: "Coincidencia encontrada",
+        fecha_evento: new Date().toISOString(),
+        descripcion_lugar_evento: "Coincidencia en base local",
+        direccion_evento: "HostGator DB"
+      }, {
+        headers: { Authorization: req.headers['authorization'] }
+      });
+
+      return res.json({
+        mensaje: 'Coincidencia encontrada y notificada correctamente',
+        datos: coincidencia
+      });
+    } else {
+      // 🔹 Si no se encuentra, finalizar búsqueda
+      await axios.post('http://localhost:3000/busqueda-finalizada', {
+        id,
+        curp
+      }, {
+        headers: { Authorization: req.headers['authorization'] }
+      });
+
+      return res.json({
+        mensaje: 'CURP no encontrado, búsqueda finalizada',
+        datos: { id, curp }
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
+  }
 });
+
 
 // Endpoint para notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, (req, res) => {
