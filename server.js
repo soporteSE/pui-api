@@ -24,21 +24,39 @@ app.get('/', (req, res) => {
   res.send('API funcionando 🚀');
 });
 
-// Endpoint de login
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { institucion_id, clave } = req.body;
 
-  if (institucion_id === process.env.INSTITUCION_ID && clave === process.env.CLAVE) {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM usuarios WHERE institucion_id = ?',
+      [institucion_id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(403).json({ error: 'Usuario no encontrado' });
+    }
+
+    const usuario = rows[0];
+    const match = await bcrypt.compare(clave, usuario.clave);
+
+    if (!match) {
+      return res.status(403).json({ error: 'Credenciales inválidas' });
+    }
+
     const token = jwt.sign(
-      { institucion_id },
+      { institucion_id: usuario.institucion_id },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
+
     return res.json({ token });
-  } else {
-    return res.status(403).json({ error: 'Credenciales inválidas' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Error en el servidor' });
   }
 });
+
 
 // Ejemplo de endpoint protegido
 app.post('/activar-reporte', validarToken, (req, res) => {
