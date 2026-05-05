@@ -72,14 +72,45 @@ app.post('/login', async (req, res) => {
 const axios = require('axios'); // <-- para hacer los POST internos
 
 app.post('/activar-reporte', validarToken, async (req, res) => {
-  const { id, curp } = req.body;
+  const {
+    id,
+    curp,
+    nombre,
+    primer_apellido,
+    segundo_apellido,
+    fecha_nacimiento,
+    fecha_desaparicion,
+    lugar_nacimiento,
+    sexo_asignado,
+    telefono
+  } = req.body;
 
   if (!id || !curp) {
     return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
   }
 
   try {
-    // 🔹 Buscar CURP en la base de datos
+    // 🔹 Guardar el reporte en la tabla "reportes"
+    await pool.query(
+      `INSERT INTO reportes 
+        (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
+         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        curp,
+        nombre || null,
+        primer_apellido || null,
+        segundo_apellido || null,
+        fecha_nacimiento || null,
+        fecha_desaparicion || null,
+        lugar_nacimiento || null,
+        sexo_asignado || null,
+        telefono || null
+      ]
+    );
+
+    // 🔹 Buscar CURP en la base de datos de personas
     const [rows] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
 
     if (rows.length > 0) {
@@ -100,7 +131,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       });
 
       return res.json({
-        mensaje: 'Coincidencia encontrada y notificada correctamente',
+        mensaje: 'Reporte guardado y coincidencia encontrada/notificada',
         datos: coincidencia
       });
     } else {
@@ -113,7 +144,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       });
 
       return res.json({
-        mensaje: 'CURP no encontrado, búsqueda finalizada',
+        mensaje: 'Reporte guardado, CURP no encontrado, búsqueda finalizada',
         datos: { id, curp }
       });
     }
