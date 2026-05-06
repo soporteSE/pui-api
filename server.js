@@ -3,6 +3,7 @@ const bodyParser = require('body-parser');
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -68,9 +69,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Ejemplo de endpoint protegido
-const axios = require('axios'); // <-- para hacer los POST internos
-
+// Endpoint protegido: activar-reporte
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const {
     id,
@@ -90,7 +89,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
   }
 
   try {
-    // 🔹 Guardar el reporte en la tabla "reportes"
+    // Guardar el reporte en la tabla "reportes"
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
@@ -110,17 +109,47 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       ]
     );
 
-    // 🔹 Buscar CURP en la base de datos de personas
+    // Buscar CURP en la base de datos de personas
     const [rows] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
 
     if (rows.length > 0) {
-      // 🔹 Si se encuentra, notificar coincidencia
-      const coincidencia = rows[0];
+      const persona = rows[0];
+
+      // Comparar campos relevantes
+      let discrepancias = [];
+      if (nombre && persona.nombre !== nombre) discrepancias.push('nombre');
+      if (primer_apellido && persona.primer_apellido !== primer_apellido) discrepancias.push('primer_apellido');
+      if (segundo_apellido && persona.segundo_apellido !== segundo_apellido) discrepancias.push('segundo_apellido');
+      if (fecha_nacimiento && persona.fecha_nacimiento !== fecha_nacimiento) discrepancias.push('fecha_nacimiento');
+      if (lugar_nacimiento && persona.lugar_nacimiento !== lugar_nacimiento) discrepancias.push('lugar_nacimiento');
+      if (sexo_asignado && persona.sexo_asignado !== sexo_asignado) discrepancias.push('sexo_asignado');
+      if (telefono && persona.telefono !== telefono) discrepancias.push('telefono');
+
+      if (discrepancias.length > 0) {
+        // Guardar discrepancia en tabla "discrepancias"
+        await pool.query(
+          `INSERT INTO discrepancias (curp, datos_reporte, datos_persona) VALUES (?, ?, ?)`,
+          [
+            curp,
+            JSON.stringify({ id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono }),
+            JSON.stringify(persona)
+          ]
+        );
+
+        return res.json({
+          mensaje: 'Reporte guardado, pero se detectaron discrepancias. Revisar en módulo revisar_coincidencias.php',
+          discrepancias,
+          datos_reporte: { id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono },
+          datos_persona: persona
+        });
+      }
+
+      // Si no hay discrepancias, notificar coincidencia
       await axios.post('http://localhost:3000/notificar-coincidencia', {
-        curp: coincidencia.curp,
-        nombre: coincidencia.nombre,
-        primer_apellido: coincidencia.primer_apellido,
-        segundo_apellido: coincidencia.segundo_apellido,
+        curp: persona.curp,
+        nombre: persona.nombre,
+        primer_apellido: persona.primer_apellido,
+        segundo_apellido: persona.segundo_apellido,
         fase_busqueda: "1",
         tipo_evento: "Coincidencia encontrada",
         fecha_evento: new Date().toISOString(),
@@ -132,10 +161,10 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
 
       return res.json({
         mensaje: 'Reporte guardado y coincidencia encontrada/notificada',
-        datos: coincidencia
+        datos: persona
       });
     } else {
-      // 🔹 Si no se encuentra, finalizar búsqueda
+      // Si no se encuentra, finalizar búsqueda
       await axios.post('http://localhost:3000/busqueda-finalizada', {
         id,
         curp
@@ -153,7 +182,6 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
   }
 });
-
 
 // Endpoint para notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, (req, res) => {
@@ -215,7 +243,7 @@ app.post('/busqueda-finalizada', validarToken, (req, res) => {
 
   console.log(`Búsqueda finalizada para ID: ${id}, CURP: ${curp}`);
 
-  return res.json({
+    return res.json({
     mensaje: 'Búsqueda histórica finalizada correctamente',
     datos: { id, curp }
   });
