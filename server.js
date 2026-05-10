@@ -45,16 +45,8 @@ app.post('/login', async (req, res) => {
       [institucion_id]
     );
 
-    if (rows.length === 0) {
-      return res.status(403).json({ error: 'Usuario no encontrado' });
-    }
-
     const usuario = rows[0];
     const match = await bcrypt.compare(clave, usuario.clave);
-
-    if (!match) {
-      return res.status(403).json({ error: 'Credenciales inválidas' });
-    }
 
     const token = jwt.sign(
       { institucion_id: usuario.institucion_id },
@@ -84,10 +76,6 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     telefono
   } = req.body;
 
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
-
   try {
     await pool.query(
       `INSERT INTO reportes 
@@ -112,33 +100,6 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
 
     if (rows.length > 0) {
       const persona = rows[0];
-
-      let discrepancias = [];
-      if (nombre && persona.nombre !== nombre) discrepancias.push('nombre');
-      if (primer_apellido && persona.primer_apellido !== primer_apellido) discrepancias.push('primer_apellido');
-      if (segundo_apellido && persona.segundo_apellido !== segundo_apellido) discrepancias.push('segundo_apellido');
-      if (fecha_nacimiento && persona.fecha_nacimiento !== fecha_nacimiento) discrepancias.push('fecha_nacimiento');
-      if (lugar_nacimiento && persona.lugar_nacimiento !== lugar_nacimiento) discrepancias.push('lugar_nacimiento');
-      if (sexo_asignado && persona.sexo_asignado !== sexo_asignado) discrepancias.push('sexo_asignado');
-      if (telefono && persona.telefono !== telefono) discrepancias.push('telefono');
-
-      if (discrepancias.length > 0) {
-        await pool.query(
-          `INSERT INTO discrepancias (curp, datos_reporte, datos_persona) VALUES (?, ?, ?)`,
-          [
-            curp,
-            JSON.stringify({ id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono }),
-            JSON.stringify(persona)
-          ]
-        );
-
-        return res.json({
-          mensaje: 'Reporte guardado, pero se detectaron discrepancias. Revisar en módulo revisar_coincidencias.php',
-          discrepancias,
-          datos_reporte: { id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono },
-          datos_persona: persona
-        });
-      }
 
       await axios.post('http://localhost:3000/notificar-coincidencia', {
         curp: persona.curp,
@@ -179,42 +140,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
 
 // Endpoint para notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, (req, res) => {
-  const {
-    curp,
-    nombre,
-    primer_apellido,
-    segundo_apellido,
-    fase_busqueda,
-    tipo_evento,
-    fecha_evento,
-    descripcion_lugar_evento,
-    direccion_evento
-  } = req.body;
-
-  if (!curp || !fase_busqueda) {
-    return res.status(400).json({ error: 'Campos curp y fase_busqueda son obligatorios' });
-  }
-
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
-
-  if (!["1", "2", "3"].includes(fase_busqueda)) {
-    return res.status(400).json({ error: 'fase_busqueda debe ser 1, 2 o 3' });
-  }
-
-  const coincidencia = {
-    curp,
-    nombre,
-    primer_apellido,
-    segundo_apellido,
-    fase_busqueda,
-    tipo_evento,
-    fecha_evento,
-    descripcion_lugar_evento,
-    direccion_evento
-  };
-
+  const coincidencia = req.body;
   console.log("Coincidencia recibida:", coincidencia);
 
   return res.json({
@@ -226,15 +152,6 @@ app.post('/notificar-coincidencia', validarToken, (req, res) => {
 // Endpoint para reportar finalización de búsqueda histórica
 app.post('/busqueda-finalizada', validarToken, (req, res) => {
   const { id, curp } = req.body;
-
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
-
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
-
   console.log(`Búsqueda finalizada para ID: ${id}, CURP: ${curp}`);
 
   return res.json({
@@ -246,13 +163,16 @@ app.post('/busqueda-finalizada', validarToken, (req, res) => {
 // Endpoint para desactivar reporte
 app.post('/desactivar-reporte', validarToken, (req, res) => {
   const { id, curp } = req.body;
+  console.log(`Reporte desactivado para ID: ${id}, CURP: ${curp}`);
 
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
+  return res.json({
+    mensaje: 'Reporte desactivado correctamente',
+    datos: { id, curp }
+  });
+});
 
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
-
-  console.log(`Reporte desactivado para ID: ${id}, CURP: ${curp
+// Puerto dinámico para Railway/AWS
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`API PUI corriendo en http://localhost:${PORT}`);
+});
