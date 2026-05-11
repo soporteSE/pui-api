@@ -124,10 +124,10 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     if (personas.length > 0) {
       const persona = personas[0];
 
-      // Insertar encabezado de coincidencia
+      // Insertar encabezado y recuperar ID
       const [encabezado] = await pool.query(
-        `INSERT INTO encabezados_coincidencias (fecha_reporte, hora_envio, ip_origen) 
-         VALUES (CURDATE(), CURTIME(), ?)`,
+        `INSERT INTO encabezados_coincidencias (fecha_reporte, hora_envio, ip_origen, creado_en) 
+         VALUES (CURDATE(), CURTIME(), ?, NOW())`,
         [req.ip]
       );
       const encabezadoId = encabezado.insertId;
