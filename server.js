@@ -119,34 +119,34 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
        sexo_asignado || null, telefono || null]
     );
 
-    // 🔹 Buscar coincidencia en personas
+    // Buscar coincidencia en personas
     const [personas] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
     if (personas.length > 0) {
       const persona = personas[0];
 
-      // Insertar encabezado de coincidencia (fase 1)
-      await pool.query(
-        `INSERT INTO encabezados_coincidencias 
-          (curp, fase_busqueda, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-         VALUES (?, ?, NOW(), ?, ?)`,
-        [curp, "1", "Coincidencia inicial en tabla personas", "Base de datos local"]
+      // Insertar encabezado de coincidencia
+      const [encabezado] = await pool.query(
+        `INSERT INTO encabezados_coincidencias (fecha_reporte, hora_envio, ip_origen) 
+         VALUES (CURDATE(), CURTIME(), ?)`,
+        [req.ip]
       );
+      const encabezadoId = encabezado.insertId;
 
-      // Insertar detalle de coincidencia
+      // Insertar detalle de coincidencia referenciado al encabezado
       await pool.query(
         `INSERT INTO coincidencias_reportadas 
-          (curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+          (encabezado_id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
            tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [persona.curp, persona.nombre, persona.primer_apellido, persona.segundo_apellido,
-         "1", "Coincidencia encontrada", "Coincidencia en base local", "HostGator DB"]
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
+        [encabezadoId, persona.curp, persona.nombre, persona.primer_apellido, persona.segundo_apellido,
+         "1", "Coincidencia encontrada", "Coincidencia inicial en tabla personas", "Base de datos local"]
       );
     }
 
     // Validar token vigente desde configuracion
     const { token, intervalo } = await obtenerToken();
 
-    // 🔹 Fase 3: búsqueda continua con intervalo configurable
+    // Fase 3: búsqueda continua con intervalo configurable
     const intervaloMs = intervalo * 60 * 1000;
     setInterval(async () => {
       const [nuevos] = await pool.query(
@@ -156,16 +156,16 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       for (const evento of nuevos) {
         await pool.query(
           `INSERT INTO coincidencias_reportadas 
-            (curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+            (encabezado_id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
              tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [curp, nombre || null, primer_apellido || null, segundo_apellido || null,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [encabezadoId, curp, nombre || null, primer_apellido || null, segundo_apellido || null,
            "3", evento.tipo_evento, evento.fecha_evento, evento.descripcion, evento.direccion]
         );
       }
     }, intervaloMs);
 
-    return res.json({ mensaje: 'Reporte activado, coincidencias iniciales verificadas y búsqueda continua configurada', intervalo });
+    return res.json({ mensaje: 'Reporte activado, coincidencias iniciales guardadas y búsqueda continua configurada', intervalo });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
