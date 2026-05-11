@@ -124,7 +124,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     if (personas.length > 0) {
       const persona = personas[0];
 
-      // Insertar encabezado y recuperar ID
+      // Insertar encabezado
       const [encabezado] = await pool.query(
         `INSERT INTO encabezados_coincidencias (fecha_reporte, hora_envio, ip_origen, creado_en) 
          VALUES (CURDATE(), CURTIME(), ?, NOW())`,
@@ -132,18 +132,18 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       );
       const encabezadoId = encabezado.insertId;
 
-      // Insertar detalle de coincidencia referenciado al encabezado
+      // Insertar coincidencia completa
       await pool.query(
         `INSERT INTO coincidencias_reportadas 
           (encabezado_id, reporte_id, fase_busqueda, curp, nombre, primer_apellido, segundo_apellido, 
            fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono, correo_electronico, calle, numero, colonia, 
            codigo_postal, municipio, entidad_federativa, foto, huella, tipo_evento, fecha_evento, 
            descripcion_lugar_evento, direccion_evento, fecha_registro, ip_origen) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW(), ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW(), ?)`,
         [
           encabezadoId,
           id,
-          "1", // fase de búsqueda inicial
+          "1", // fase inicial
           persona.curp,
           persona.nombre,
           persona.primer_apellido,
@@ -172,7 +172,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     // Validar token vigente desde configuracion
     const { token, intervalo } = await obtenerToken();
 
-    // Fase 3: búsqueda continua con intervalo configurable
+    // Fase 3: búsqueda continua
     const intervaloMs = intervalo * 60 * 1000;
     setInterval(async () => {
       const [nuevos] = await pool.query(
