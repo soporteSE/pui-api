@@ -100,6 +100,7 @@ app.post('/login', async (req, res) => {
 });
 
 // Activar reporte
+// Activar reporte
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp, nombre, primer_apellido, segundo_apellido,
           fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
@@ -119,52 +120,31 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
        sexo_asignado || null, telefono || null]
     );
 
-    // Buscar coincidencia en personas
+    // 🔹 Revisar si el CURP existe en personas
     const [personas] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
     if (personas.length > 0) {
-      const persona = personas[0];
-
-      // Insertar encabezado
-      const [encabezado] = await pool.query(
-        `INSERT INTO encabezados_coincidencias (fecha_reporte, hora_envio, ip_origen, creado_en) 
-         VALUES (CURDATE(), CURTIME(), ?, NOW())`,
-        [req.ip]
-      );
-      const encabezadoId = encabezado.insertId;
-
-      // Insertar coincidencia completa
+      // Insertar coincidencia con fase 1
       await pool.query(
-        `INSERT INTO coincidencias_reportadas 
-          (encabezado_id, reporte_id, fase_busqueda, curp, nombre, primer_apellido, segundo_apellido, 
-           fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono, correo_electronico, calle, numero, colonia, 
-           codigo_postal, municipio, entidad_federativa, foto, huella, tipo_evento, fecha_evento, 
-           descripcion_lugar_evento, direccion_evento, fecha_registro, ip_origen) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW(), ?)`,
+        `INSERT INTO coincidencias 
+          (id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
+           lugar_nacimiento, sexo_asignado, telefono, fase_busqueda, tipo_evento, 
+           fecha_evento, descripcion_lugar_evento, direccion_evento) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          encabezadoId,
           id,
+          curp,
+          nombre || null,
+          primer_apellido || null,
+          segundo_apellido || null,
+          fecha_nacimiento || null,
+          lugar_nacimiento || null,
+          sexo_asignado || null,
+          telefono || null,
           "1", // fase inicial
-          persona.curp,
-          persona.nombre,
-          persona.primer_apellido,
-          persona.segundo_apellido,
-          persona.fecha_nacimiento || null,
-          persona.lugar_nacimiento || null,
-          persona.sexo_asignado || null,
-          persona.telefono || null,
-          persona.correo_electronico || null,
-          persona.calle || null,
-          persona.numero || null,
-          persona.colonia || null,
-          persona.codigo_postal || null,
-          persona.municipio || null,
-          persona.entidad_federativa || null,
-          persona.foto || null,
-          persona.huella || null,
           "Coincidencia encontrada",
+          new Date(), // fecha_evento
           "Coincidencia inicial en tabla personas",
-          "Base de datos local",
-          req.ip
+          "Base de datos local"
         ]
       );
     }
@@ -172,7 +152,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     // Validar token vigente desde configuracion
     const { token, intervalo } = await obtenerToken();
 
-    // Fase 3: búsqueda continua
+    // 🔹 Fase 3: búsqueda continua con intervalo configurable
     const intervaloMs = intervalo * 60 * 1000;
     setInterval(async () => {
       const [nuevos] = await pool.query(
@@ -181,29 +161,27 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       );
       for (const evento of nuevos) {
         await pool.query(
-          `INSERT INTO coincidencias_reportadas 
-            (encabezado_id, reporte_id, fase_busqueda, curp, nombre, primer_apellido, segundo_apellido, 
-             tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento, fecha_registro, ip_origen) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          `INSERT INTO coincidencias 
+            (id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+             tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            encabezadoId,
             id,
-            "3",
             curp,
             nombre || null,
             primer_apellido || null,
             segundo_apellido || null,
+            "3",
             evento.tipo_evento,
             evento.fecha_evento,
             evento.descripcion,
-            evento.direccion,
-            req.ip
+            evento.direccion
           ]
         );
       }
     }, intervaloMs);
 
-    return res.json({ mensaje: 'Reporte activado, coincidencias iniciales guardadas y búsqueda continua configurada', intervalo });
+    return res.json({ mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada', intervalo });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
