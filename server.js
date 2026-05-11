@@ -100,37 +100,48 @@ app.post('/login', async (req, res) => {
 });
 
 // Activar reporte
+// Activar reporte
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp, nombre, primer_apellido, segundo_apellido,
           fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
           sexo_asignado, telefono } = req.body;
 
-  if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
+  if (!id || !curp) {
+    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
+  }
 
   try {
-    // Guardar reporte
+    // Guardar reporte en la tabla reportes
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
          fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, curp, nombre || null, primer_apellido || null, segundo_apellido || null,
-       fecha_nacimiento || null, fecha_desaparicion || null, lugar_nacimiento || null,
-       sexo_asignado || null, telefono || null]
+      [
+        id,
+        curp,
+        nombre || null,
+        primer_apellido || null,
+        segundo_apellido || null,
+        fecha_nacimiento || null,
+        fecha_desaparicion || null,
+        lugar_nacimiento || null,
+        sexo_asignado || null,
+        telefono || null
+      ]
     );
 
-    // 🔹 Revisar si el CURP existe en personas
+    // Revisar si el CURP existe en personas
     const [personas] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
     if (personas.length > 0) {
-      // Insertar coincidencia con fase 1
+      // Insertar coincidencia con fase 1 en coincidencias
       await pool.query(
         `INSERT INTO coincidencias 
-          (id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
+          (curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
            lugar_nacimiento, sexo_asignado, telefono, fase_busqueda, tipo_evento, 
            fecha_evento, descripcion_lugar_evento, direccion_evento) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          id,
           curp,
           nombre || null,
           primer_apellido || null,
@@ -151,7 +162,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     // Validar token vigente desde configuracion
     const { token, intervalo } = await obtenerToken();
 
-    // 🔹 Fase 3: búsqueda continua con intervalo configurable
+    // Fase 3: búsqueda continua con intervalo configurable
     const intervaloMs = intervalo * 60 * 1000;
     setInterval(async () => {
       const [nuevos] = await pool.query(
@@ -161,11 +172,10 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       for (const evento of nuevos) {
         await pool.query(
           `INSERT INTO coincidencias 
-            (id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+            (curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
              tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
-            id,
             curp,
             nombre || null,
             primer_apellido || null,
@@ -180,7 +190,10 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       }
     }, intervaloMs);
 
-    return res.json({ mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada', intervalo });
+    return res.json({
+      mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada',
+      intervalo
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
