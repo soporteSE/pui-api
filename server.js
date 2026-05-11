@@ -135,11 +135,37 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       // Insertar detalle de coincidencia referenciado al encabezado
       await pool.query(
         `INSERT INTO coincidencias_reportadas 
-          (encabezado_id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
-           tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)`,
-        [encabezadoId, persona.curp, persona.nombre, persona.primer_apellido, persona.segundo_apellido,
-         "1", "Coincidencia encontrada", "Coincidencia inicial en tabla personas", "Base de datos local"]
+          (encabezado_id, reporte_id, fase_busqueda, curp, nombre, primer_apellido, segundo_apellido, 
+           fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono, correo_electronico, calle, numero, colonia, 
+           codigo_postal, municipio, entidad_federativa, foto, huella, tipo_evento, fecha_evento, 
+           descripcion_lugar_evento, direccion_evento, fecha_registro, ip_origen) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW(), ?)`,
+        [
+          encabezadoId,
+          id,
+          "1", // fase de búsqueda inicial
+          persona.curp,
+          persona.nombre,
+          persona.primer_apellido,
+          persona.segundo_apellido,
+          persona.fecha_nacimiento || null,
+          persona.lugar_nacimiento || null,
+          persona.sexo_asignado || null,
+          persona.telefono || null,
+          persona.correo_electronico || null,
+          persona.calle || null,
+          persona.numero || null,
+          persona.colonia || null,
+          persona.codigo_postal || null,
+          persona.municipio || null,
+          persona.entidad_federativa || null,
+          persona.foto || null,
+          persona.huella || null,
+          "Coincidencia encontrada",
+          "Coincidencia inicial en tabla personas",
+          "Base de datos local",
+          req.ip
+        ]
       );
     }
 
@@ -156,11 +182,23 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       for (const evento of nuevos) {
         await pool.query(
           `INSERT INTO coincidencias_reportadas 
-            (encabezado_id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
-             tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [encabezadoId, curp, nombre || null, primer_apellido || null, segundo_apellido || null,
-           "3", evento.tipo_evento, evento.fecha_evento, evento.descripcion, evento.direccion]
+            (encabezado_id, reporte_id, fase_busqueda, curp, nombre, primer_apellido, segundo_apellido, 
+             tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento, fecha_registro, ip_origen) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+          [
+            encabezadoId,
+            id,
+            "3",
+            curp,
+            nombre || null,
+            primer_apellido || null,
+            segundo_apellido || null,
+            evento.tipo_evento,
+            evento.fecha_evento,
+            evento.descripcion,
+            evento.direccion,
+            req.ip
+          ]
         );
       }
     }, intervaloMs);
