@@ -158,9 +158,30 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
 
 // Notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, async (req, res) => {
-  const { curp, nombre, primer_apellido, segundo_apellido,
-          fase_busqueda, tipo_evento, fecha_evento,
-          descripcion_lugar_evento, direccion_evento } = req.body;
+  const {
+    encabezado_id, // 🔑 ahora obligatorio
+    curp, nombre, primer_apellido, segundo_apellido,
+    fase_busqueda, tipo_evento, fecha_evento,
+    descripcion_lugar_evento, direccion_evento
+  } = req.body;
+
+  if (!encabezado_id || !curp || !fase_busqueda) {
+    return res.status(400).json({ error: 'Campos encabezado_id, curp y fase_busqueda son obligatorios' });
+  }
+
+  await pool.query(
+    `INSERT INTO coincidencias_reportadas 
+      (encabezado_id, curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+       tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [encabezado_id, curp, nombre || null, primer_apellido || null, segundo_apellido || null,
+     fase_busqueda, tipo_evento || null, fecha_evento || null,
+     descripcion_lugar_evento || null, direccion_evento || null]
+  );
+
+  return res.json({ mensaje: 'Coincidencia notificada correctamente' });
+});
+
 
   if (!curp || !fase_busqueda) return res.status(400).json({ error: 'Campos curp y fase_busqueda son obligatorios' });
   if (!["1","2","3"].includes(fase_busqueda)) return res.status(400).json({ error: 'fase_busqueda debe ser 1, 2 o 3' });
