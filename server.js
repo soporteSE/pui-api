@@ -17,6 +17,8 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME
 });
 
+pool.on('error', err => console.error('MySQL error:', err));
+
 // Middleware para validar JWT en endpoints protegidos
 function validarToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -198,7 +200,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
   }
 });
-
+	
 // Notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, async (req, res) => {
   const { curp, nombre, primer_apellido, segundo_apellido,
