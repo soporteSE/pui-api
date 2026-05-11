@@ -17,7 +17,7 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME
 });
 
-// Middleware para validar JWT en endpoints protegidos
+// Middleware para validar JWT
 function validarToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'Token requerido' });
@@ -35,33 +35,25 @@ app.get('/', (req, res) => {
   res.send('API funcionando 🚀');
 });
 
-// Endpoint de login con MySQL
+// Login
 app.post('/login', async (req, res) => {
   const { institucion_id, clave } = req.body;
-
   try {
     const [rows] = await pool.query(
       'SELECT * FROM usuarios WHERE institucion_id = ?',
       [institucion_id]
     );
-
-    if (rows.length === 0) {
-      return res.status(403).json({ error: 'Usuario no encontrado' });
-    }
+    if (rows.length === 0) return res.status(403).json({ error: 'Usuario no encontrado' });
 
     const usuario = rows[0];
     const match = await bcrypt.compare(clave, usuario.clave);
-
-    if (!match) {
-      return res.status(403).json({ error: 'Credenciales inválidas' });
-    }
+    if (!match) return res.status(403).json({ error: 'Credenciales inválidas' });
 
     const token = jwt.sign(
       { institucion_id: usuario.institucion_id },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
-
     return res.json({ token });
   } catch (err) {
     console.error(err);
@@ -69,207 +61,140 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Endpoint protegido: activar-reporte
+// Activar reporte (fases 1, 2 y 3)
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const {
-    id,
-    curp,
-    nombre,
-    primer_apellido,
-    segundo_apellido,
-    fecha_nacimiento,
-    fecha_desaparicion,
-    lugar_nacimiento,
-    sexo_asignado,
-    telefono
+    id, curp, nombre, primer_apellido, segundo_apellido,
+    fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
+    sexo_asignado, telefono
   } = req.body;
 
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
+  if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
 
   try {
-    // Guardar el reporte en la tabla "reportes"
+    // Guardar reporte
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
          fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        curp,
-        nombre || null,
-        primer_apellido || null,
-        segundo_apellido || null,
-        fecha_nacimiento || null,
-        fecha_desaparicion || null,
-        lugar_nacimiento || null,
-        sexo_asignado || null,
-        telefono || null
-      ]
+      [id, curp, nombre || null, primer_apellido || null, segundo_apellido || null,
+       fecha_nacimiento || null, fecha_desaparicion || null, lugar_nacimiento || null,
+       sexo_asignado || null, telefono || null]
     );
 
-    // Buscar CURP en la base de datos de personas
+    // 🔹 Fase 1: búsqueda básica
     const [rows] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
-
     if (rows.length > 0) {
       const persona = rows[0];
-
-      // Comparar campos relevantes
-      let discrepancias = [];
-      if (nombre && persona.nombre !== nombre) discrepancias.push('nombre');
-      if (primer_apellido && persona.primer_apellido !== primer_apellido) discrepancias.push('primer_apellido');
-      if (segundo_apellido && persona.segundo_apellido !== segundo_apellido) discrepancias.push('segundo_apellido');
-      if (fecha_nacimiento && persona.fecha_nacimiento !== fecha_nacimiento) discrepancias.push('fecha_nacimiento');
-      if (lugar_nacimiento && persona.lugar_nacimiento !== lugar_nacimiento) discrepancias.push('lugar_nacimiento');
-      if (sexo_asignado && persona.sexo_asignado !== sexo_asignado) discrepancias.push('sexo_asignado');
-      if (telefono && persona.telefono !== telefono) discrepancias.push('telefono');
-
-      if (discrepancias.length > 0) {
-        // Guardar discrepancia en tabla "discrepancias"
-        await pool.query(
-          `INSERT INTO discrepancias (curp, datos_reporte, datos_persona) VALUES (?, ?, ?)`,
-          [
-            curp,
-            JSON.stringify({ id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono }),
-            JSON.stringify(persona)
-          ]
-        );
-
-        return res.json({
-          mensaje: 'Reporte guardado, pero se detectaron discrepancias. Revisar en módulo revisar_coincidencias.php',
-          discrepancias,
-          datos_reporte: { id, curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, lugar_nacimiento, sexo_asignado, telefono },
-          datos_persona: persona
-        });
-      }
-
-      // Si no hay discrepancias, notificar coincidencia
       await axios.post('http://localhost:3000/notificar-coincidencia', {
         curp: persona.curp,
         nombre: persona.nombre,
         primer_apellido: persona.primer_apellido,
         segundo_apellido: persona.segundo_apellido,
-        fase_busqueda: "1",
-        tipo_evento: "Coincidencia encontrada",
-        fecha_evento: new Date().toISOString(),
-        descripcion_lugar_evento: "Coincidencia en base local",
-        direccion_evento: "HostGator DB"
-      }, {
-        headers: { Authorization: req.headers['authorization'] }
-      });
-
-      return res.json({
-        mensaje: 'Reporte guardado y coincidencia encontrada/notificada',
-        datos: persona
-      });
-    } else {
-      // Si no se encuentra, finalizar búsqueda
-      await axios.post('http://localhost:3000/busqueda-finalizada', {
-        id,
-        curp
-      }, {
-        headers: { Authorization: req.headers['authorization'] }
-      });
-
-      return res.json({
-        mensaje: 'Reporte guardado, CURP no encontrado, búsqueda finalizada',
-        datos: { id, curp }
-      });
+        fase_busqueda: "1"
+      }, { headers: { Authorization: req.headers['authorization'] } });
     }
+
+    // 🔹 Fase 2: búsqueda histórica (máx. 12 años)
+    if (fecha_desaparicion) {
+      const fechaInicio = new Date(fecha_desaparicion);
+      const fechaFin = new Date();
+      const limite = new Date(fechaFin);
+      limite.setFullYear(limite.getFullYear() - 12);
+      if (fechaInicio < limite) fechaInicio.setTime(limite.getTime());
+
+      const [historicos] = await pool.query(
+        'SELECT * FROM eventos WHERE curp = ? AND fecha_evento BETWEEN ? AND ?',
+        [curp, fechaInicio, fechaFin]
+      );
+
+      for (const evento of historicos) {
+        await axios.post('http://localhost:3000/notificar-coincidencia', {
+          curp,
+          nombre,
+          primer_apellido,
+          segundo_apellido,
+          fase_busqueda: "2",
+          tipo_evento: evento.tipo_evento,
+          fecha_evento: evento.fecha_evento,
+          descripcion_lugar_evento: evento.descripcion,
+          direccion_evento: evento.direccion
+        }, { headers: { Authorization: req.headers['authorization'] } });
+      }
+
+      await axios.post('http://localhost:3000/busqueda-finalizada', { id, curp },
+        { headers: { Authorization: req.headers['authorization'] } });
+    }
+
+    // 🔹 Fase 3: búsqueda continua (ejemplo simple cada hora)
+    setInterval(async () => {
+      const [nuevos] = await pool.query(
+        'SELECT * FROM eventos WHERE curp = ? AND fecha_evento > NOW() - INTERVAL 1 HOUR',
+        [curp]
+      );
+      for (const evento of nuevos) {
+        await axios.post('http://localhost:3000/notificar-coincidencia', {
+          curp,
+          nombre,
+          primer_apellido,
+          segundo_apellido,
+          fase_busqueda: "3",
+          tipo_evento: evento.tipo_evento,
+          fecha_evento: evento.fecha_evento,
+          descripcion_lugar_evento: evento.descripcion,
+          direccion_evento: evento.direccion
+        }, { headers: { Authorization: req.headers['authorization'] } });
+      }
+    }, 3600000); // cada hora
+
+    return res.json({ mensaje: 'Reporte activado y fases de búsqueda iniciadas' });
+
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
   }
 });
 
-// Endpoint para notificar coincidencia
-app.post('/notificar-coincidencia', validarToken, (req, res) => {
-  const {
-    curp,
-    nombre,
-    primer_apellido,
-    segundo_apellido,
-    fase_busqueda,
-    tipo_evento,
-    fecha_evento,
-    descripcion_lugar_evento,
-    direccion_evento
-  } = req.body;
+// Notificar coincidencia
+app.post('/notificar-coincidencia', validarToken, async (req, res) => {
+  const { curp, nombre, primer_apellido, segundo_apellido,
+          fase_busqueda, tipo_evento, fecha_evento,
+          descripcion_lugar_evento, direccion_evento } = req.body;
 
-  if (!curp || !fase_busqueda) {
-    return res.status(400).json({ error: 'Campos curp y fase_busqueda son obligatorios' });
-  }
+  if (!curp || !fase_busqueda) return res.status(400).json({ error: 'Campos curp y fase_busqueda son obligatorios' });
+  if (!["1","2","3"].includes(fase_busqueda)) return res.status(400).json({ error: 'fase_busqueda debe ser 1, 2 o 3' });
 
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
+  await pool.query(
+    `INSERT INTO coincidencias_reportadas 
+      (curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
+       tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [curp, nombre || null, primer_apellido || null, segundo_apellido || null,
+     fase_busqueda, tipo_evento || null, fecha_evento || null,
+     descripcion_lugar_evento || null, direccion_evento || null]
+  );
 
-  if (!["1", "2", "3"].includes(fase_busqueda)) {
-    return res.status(400).json({ error: 'fase_busqueda debe ser 1, 2 o 3' });
-  }
-
-  const coincidencia = {
-    curp,
-    nombre,
-    primer_apellido,
-    segundo_apellido,
-    fase_busqueda,
-    tipo_evento,
-    fecha_evento,
-    descripcion_lugar_evento,
-    direccion_evento
-  };
-
-  console.log("Coincidencia recibida:", coincidencia);
-
-  return res.json({
-    mensaje: 'Coincidencia notificada correctamente',
-    datos: coincidencia
-  });
+  return res.json({ mensaje: 'Coincidencia notificada correctamente' });
 });
 
-// Endpoint para reportar finalización de búsqueda histórica
+// Finalizar búsqueda histórica
 app.post('/busqueda-finalizada', validarToken, (req, res) => {
   const { id, curp } = req.body;
-
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
-
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
-
+  if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
   console.log(`Búsqueda finalizada para ID: ${id}, CURP: ${curp}`);
-
-    return res.json({
-    mensaje: 'Búsqueda histórica finalizada correctamente',
-    datos: { id, curp }
-  });
+  return res.json({ mensaje: 'Búsqueda histórica finalizada correctamente', datos: { id, curp } });
 });
 
-// Endpoint para desactivar reporte
+// Desactivar reporte
 app.post('/desactivar-reporte', validarToken, (req, res) => {
   const { id, curp } = req.body;
-
-  if (!id || !curp) {
-    return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  }
-
-  if (!/^[A-Z0-9]{18}$/.test(curp)) {
-    return res.status(400).json({ error: 'CURP inválido, debe tener 18 caracteres alfanuméricos en mayúsculas' });
-  }
-
+  if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
   console.log(`Reporte desactivado para ID: ${id}, CURP: ${curp}`);
-
-  return res.json({
-    mensaje: 'Reporte desactivado correctamente',
-    datos: { id, curp }
-  });
+  return res.json({ mensaje: 'Reporte desactivado correctamente', datos: { id, curp } });
 });
 
-// Puerto dinámico para Railway/AWS
+// Puerto dinámico
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API PUI corriendo en http://localhost:${PORT}`);
