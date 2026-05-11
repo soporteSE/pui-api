@@ -100,7 +100,6 @@ app.post('/login', async (req, res) => {
 });
 
 // Activar reporte
-// Activar reporte
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp, nombre, primer_apellido, segundo_apellido,
           fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
