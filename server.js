@@ -70,7 +70,7 @@ async function obtenerToken() {
   return { token: nuevoToken, intervalo: config.intervalo_busqueda_minutos };
 }
 
-// 🔄 BÚSQUEDA CONTINUA GLOBAL (CORREGIDA - FUERA DE ENDPOINTS)
+// 🔄 BÚSQUEDA CONTINUA GLOBAL (GUARDA EN coincidencias)
 let intervaloBusquedaContinua = null;
 
 async function iniciarBusquedaContinua() {
@@ -109,6 +109,30 @@ async function iniciarBusquedaContinua() {
           if (personas.length > 0) {
             console.log(`✅ Coincidencia encontrada para CURP: ${curpPendiente}`);
 
+            // ✅ GUARDAR EN TABLA coincidencias (FASE 2)
+            await pool.query(
+              `INSERT INTO coincidencias 
+                (curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
+                 lugar_nacimiento, sexo_asignado, telefono, fase_busqueda, tipo_evento, 
+                 fecha_evento, descripcion_lugar_evento, direccion_evento) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                curpPendiente,
+                reporte.nombre || null,
+                reporte.primer_apellido || null,
+                reporte.segundo_apellido || null,
+                reporte.fecha_nacimiento || null,
+                reporte.lugar_nacimiento || null,
+                reporte.sexo_asignado || null,
+                reporte.telefono || null,
+                "2", // fase 2 - búsqueda continua
+                "Coincidencia en búsqueda continua",
+                new Date(),
+                "Coincidencia detectada en búsqueda periódica",
+                "Base de datos local"
+              ]
+            );
+
             // Llamar al endpoint notificar-coincidencia con fase 2
             await axios.post(
               'http://localhost:3000/notificar-coincidencia',
@@ -126,13 +150,17 @@ async function iniciarBusquedaContinua() {
               {
                 headers: { Authorization: `Bearer ${token}` }
               }
-            );
+            ).catch(err => {
+              console.error('❌ Error notificando coincidencia:', err.message);
+            });
 
             // Marcar como atendido para que no se repita
             await pool.query(
               'UPDATE reportes SET atendido = 1 WHERE reporte_id = ?',
               [reporte.reporte_id]
             );
+
+            console.log(`✅ Reporte ${reporte.reporte_id} marcado como atendido`);
           }
         }
       } catch (err) {
@@ -147,7 +175,7 @@ async function iniciarBusquedaContinua() {
 
 // Endpoint raíz
 app.get('/', (req, res) => {
-  res.send('API funcionando 🚀');
+  res.send('API PUI funcionando 🚀 - Búsqueda continua activa');
 });
 
 // Login
@@ -176,7 +204,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Activar reporte (SIN setInterval aquí)
+// Activar reporte (FASE 1 - Guarda en coincidencias)
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp, nombre, primer_apellido, segundo_apellido,
           fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
@@ -191,8 +219,8 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
-         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono, atendido, creado_en) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
+         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono, atendido, creado_en, activo) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), 1)`,
       [
         id,
         curp,
@@ -207,10 +235,12 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       ]
     );
 
-    // Revisar si el CURP existe en personas (fase 1)
+    // Revisar si el CURP existe en personas (FASE 1)
     const [personas] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
     if (personas.length > 0) {
-      // Insertar coincidencia con fase 1
+      console.log(`🎯 FASE 1: Coincidencia inmediata para CURP: ${curp}`);
+
+      // ✅ GUARDAR EN TABLA coincidencias (FASE 1)
       await pool.query(
         `INSERT INTO coincidencias 
           (curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
@@ -226,7 +256,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
           lugar_nacimiento || null,
           sexo_asignado || null,
           telefono || null,
-          "1", // fase inicial
+          "1", // fase 1 - activación inmediata
           "Coincidencia encontrada",
           new Date(),
           "Coincidencia inicial en tabla personas",
@@ -239,9 +269,14 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
         `UPDATE reportes SET atendido = 1 WHERE reporte_id = ?`,
         [id]
       );
+
+      return res.json({ 
+        mensaje: 'Reporte activado y coincidencia encontrada (FASE 1)',
+        fase: 1 
+      });
     }
 
-    res.json({ mensaje: 'Reporte activado correctamente' });
+    res.json({ mensaje: 'Reporte activado correctamente (en espera de búsqueda continua)' });
 
   } catch (err) {
     console.error(err);
@@ -249,7 +284,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
   }
 });
 
-// Notificar coincidencia
+// Notificar coincidencia (FASE 2/3)
 app.post('/notificar-coincidencia', validarToken, async (req, res) => {
   const { curp, nombre, primer_apellido, segundo_apellido,
           fase_busqueda, tipo_evento, fecha_evento,
@@ -268,6 +303,7 @@ app.post('/notificar-coincidencia', validarToken, async (req, res) => {
      descripcion_lugar_evento || null, direccion_evento || null]
   );
 
+  console.log(`📋 Coincidencia reportada - Fase ${fase_busqueda}: ${curp}`);
   return res.json({ mensaje: 'Coincidencia notificada correctamente' });
 });
 
@@ -275,7 +311,7 @@ app.post('/notificar-coincidencia', validarToken, async (req, res) => {
 app.post('/busqueda-finalizada', validarToken, (req, res) => {
   const { id, curp } = req.body;
   if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  console.log(`Búsqueda finalizada para ID: ${id}, CURP: ${curp}`);
+  console.log(`✅ Búsqueda finalizada para ID: ${id}, CURP: ${curp}`);
   return res.json({ mensaje: 'Búsqueda histórica finalizada correctamente', datos: { id, curp } });
 });
 
@@ -292,11 +328,16 @@ app.post('/desactivar-reporte', validarToken, async (req, res) => {
   }
 
   try {
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE reportes SET activo = 0 WHERE reporte_id = ?`,
       [id]
     );
 
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reporte no encontrado' });
+    }
+
+    console.log(`⏹️ Reporte desactivado: ${id}`);
     return res.json({
       message: 'Registro de finalización de búsqueda histórica guardado correctamente'
     });
@@ -306,11 +347,24 @@ app.post('/desactivar-reporte', validarToken, async (req, res) => {
   }
 });
 
+// Reiniciar búsqueda continua (para debug)
+app.post('/reiniciar-busqueda', validarToken, async (req, res) => {
+  await iniciarBusquedaContinua();
+  return res.json({ mensaje: 'Búsqueda continua reiniciada' });
+});
+
 // Puerto dinámico
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API PUI corriendo en http://localhost:${PORT}`);
+  console.log(`\n🚀 API PUI corriendo en http://localhost:${PORT}`);
+  console.log(`📊 Endpoints disponibles:`);
+  console.log(`   POST /login`);
+  console.log(`   POST /activar-reporte`);
+  console.log(`   POST /notificar-coincidencia`);
+  console.log(`   POST /desactivar-reporte`);
+  console.log(`   POST /busqueda-finalizada`);
+  console.log(`   POST /reiniciar-busqueda (debug)`);
   
-  // 🔄 INICIAR BÚSQUEDA CONTINUA AL ARRANCAR LA API
+  // 🔄 INICIAR BÚSQUEDA CONTINUA AL ARRANCAR
   iniciarBusquedaContinua();
 });
