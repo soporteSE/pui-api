@@ -238,11 +238,37 @@ app.post('/busqueda-finalizada', validarToken, (req, res) => {
 });
 
 // Desactivar reporte
-app.post('/desactivar-reporte', validarToken, (req, res) => {
-  const { id, curp } = req.body;
-  if (!id || !curp) return res.status(400).json({ error: 'Campos id y curp son obligatorios' });
-  console.log(`Reporte desactivado para ID: ${id}, CURP: ${curp}`);
-  return res.json({ mensaje: 'Reporte desactivado correctamente', datos: { id, curp } });
+app.post('/desactivar-reporte', validarToken, async (req, res) => {
+  const { id } = req.body;
+
+  // Validación básica
+  if (!id) {
+    return res.status(400).json({ error: 'Campo id es obligatorio' });
+  }
+
+  // Validar longitud (por ahora permitimos hasta 3 dígitos, pero la especificación oficial es 36-75)
+  if (id.length < 1 || id.length > 75) {
+    return res.status(400).json({ error: 'El id no cumple con la longitud permitida' });
+  }
+
+  try {
+    // Dar de baja el caso en la tabla reportes
+    await pool.query(
+      `UPDATE reportes SET activo = 0 WHERE reporte_id = ?`,
+      [id]
+    );
+
+    // Aquí podrías detener cualquier proceso periódico asociado al id
+    // Ejemplo: limpiar intervalos si los guardas en memoria
+    // if (jobs[id]) { clearInterval(jobs[id]); delete jobs[id]; }
+
+    return res.json({
+      message: 'Registro de finalización de búsqueda histórica guardado correctamente'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
+  }
 });
 
 // Puerto dinámico
