@@ -170,42 +170,59 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     const { token, intervalo } = await obtenerToken();
 
     // Fase 3: búsqueda continua con intervalo configurable
-    const intervaloMs = intervalo * 60 * 1000;
-    setInterval(async () => {
-      const [nuevos] = await pool.query(
-        'SELECT * FROM eventos WHERE curp = ? AND fecha_evento > NOW() - INTERVAL 1 HOUR',
-        [curp]
+    // Fase 3: búsqueda continua con intervalo configurable
+const intervaloMs = intervalo * 60 * 1000;
+setInterval(async () => {
+  try {
+    // Validar o renovar token antes de cada ciclo
+    const { token } = await obtenerToken();
+
+    // Buscar todos los reportes pendientes (no atendidos y activos)
+    const [pendientes] = await pool.query(
+      'SELECT * FROM reportes WHERE atendido = 0 AND activo = 1'
+    );
+
+    for (const reporte of pendientes) {
+      const curpPendiente = reporte.curp;
+
+      // Revisar si el CURP existe en personas
+      const [personas] = await pool.query(
+        'SELECT * FROM personas WHERE curp = ?',
+        [curpPendiente]
       );
-      for (const evento of nuevos) {
+
+      if (personas.length > 0) {
+        // 🔹 Llamar al endpoint notificar-coincidencia con fase 2
+        await axios.post(
+          'http://localhost:3000/notificar-coincidencia',
+          {
+            curp: curpPendiente,
+            nombre: reporte.nombre,
+            primer_apellido: reporte.primer_apellido,
+            segundo_apellido: reporte.segundo_apellido,
+            fase_busqueda: "2",
+            tipo_evento: "Coincidencia en búsqueda continua",
+            fecha_evento: new Date(),
+            descripcion_lugar_evento: "Coincidencia detectada en búsqueda periódica",
+            direccion_evento: "Base de datos local"
+          },
+          {
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        );
+
+        // Opcional: marcar como atendido para que no se repita
         await pool.query(
-          `INSERT INTO coincidencias 
-            (curp, nombre, primer_apellido, segundo_apellido, fase_busqueda, 
-             tipo_evento, fecha_evento, descripcion_lugar_evento, direccion_evento) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            curp,
-            nombre || null,
-            primer_apellido || null,
-            segundo_apellido || null,
-            "3",
-            evento.tipo_evento,
-            evento.fecha_evento,
-            evento.descripcion,
-            evento.direccion
-          ]
+          'UPDATE reportes SET atendido = 1 WHERE reporte_id = ?',
+          [reporte.reporte_id]
         );
       }
-    }, intervaloMs);
-
-    return res.json({
-      mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada. Reporte marcado como atendido si hubo coincidencia.',
-      intervalo
-    });
+    }
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
+    console.error("Error en búsqueda continua:", err.message);
   }
-});
+}, intervaloMs);
+
 	
 // Notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, async (req, res) => {
