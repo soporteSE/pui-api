@@ -101,7 +101,7 @@ app.post('/login', async (req, res) => {
   }
 });
 
-// Activar reporte
+// Activar reporte - LIMPIO (sin setInterval)
 app.post('/activar-reporte', validarToken, async (req, res) => {
   const { id, curp, nombre, primer_apellido, segundo_apellido,
           fecha_nacimiento, fecha_desaparicion, lugar_nacimiento,
@@ -116,8 +116,8 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
-         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono, atendido, creado_en) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
+         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono, atendido, creado_en, activo) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), 1)`,
       [
         id,
         curp,
@@ -132,7 +132,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
       ]
     );
 
-    // Revisar si el CURP existe en personas
+    // Revisar si el CURP existe en personas (FASE 1)
     const [personas] = await pool.query('SELECT * FROM personas WHERE curp = ?', [curp]);
     if (personas.length > 0) {
       // Insertar coincidencia con fase 1 en coincidencias
@@ -153,100 +153,29 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
           telefono || null,
           "1", // fase inicial
           "Coincidencia encontrada",
-          new Date(), // fecha_evento
+          new Date(),
           "Coincidencia inicial en tabla personas",
           "Base de datos local"
         ]
       );
 
-      // 🔹 Marcar el reporte como atendido
+      // Marcar el reporte como atendido
       await pool.query(
         `UPDATE reportes SET atendido = 1 WHERE reporte_id = ?`,
         [id]
       );
+
+      return res.json({ mensaje: 'Reporte activado - Coincidencia FASE 1 encontrada' });
     }
 
-    // Validar token vigente desde configuracion
-    const { token, intervalo } = await obtenerToken();
+    res.json({ mensaje: 'Reporte activado correctamente (esperando búsqueda continua)' });
 
-// Fase 3: búsqueda continua con intervalo configurable
-const intervaloMs = intervalo * 60 * 1000;
-setInterval(async () => {
-  try {
-    // 🔹 Validar o renovar token antes de cada ciclo
-    const { token } = await obtenerToken();
-
-    // Buscar todos los reportes pendientes (no atendidos y activos)
-    const [pendientes] = await pool.query(
-      'SELECT * FROM reportes WHERE atendido = 0 AND activo = 1'
-    );
-
-    for (const reporte of pendientes) {
-      const curpPendiente = reporte.curp;
-
-      // Revisar si el CURP existe en personas
-      const [personas] = await pool.query(
-        'SELECT * FROM personas WHERE curp = ?',
-        [curpPendiente]
-      );
-
-      if (personas.length > 0) {
-        // 🔹 Insertar coincidencia en tabla coincidencias con fase 2
-        await pool.query(
-          `INSERT INTO coincidencias 
-            (curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
-             lugar_nacimiento, sexo_asignado, telefono, fase_busqueda, tipo_evento, 
-             fecha_evento, descripcion_lugar_evento, direccion_evento) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            curpPendiente,
-            reporte.nombre || null,
-            reporte.primer_apellido || null,
-            reporte.segundo_apellido || null,
-            reporte.fecha_nacimiento || null,
-            reporte.lugar_nacimiento || null,
-            reporte.sexo_asignado || null,
-            reporte.telefono || null,
-            "2", // fase continua
-            "Coincidencia en búsqueda continua",
-            new Date(),
-            "Coincidencia detectada en búsqueda periódica",
-            "Base de datos local"
-          ]
-        );
-
-        // 🔹 Llamar al endpoint notificar-coincidencia con fase 2
-        await axios.post(
-          'http://localhost:3000/notificar-coincidencia',
-          {
-            curp: curpPendiente,
-            nombre: reporte.nombre,
-            primer_apellido: reporte.primer_apellido,
-            segundo_apellido: reporte.segundo_apellido,
-            fase_busqueda: "2",
-            tipo_evento: "Coincidencia en búsqueda continua",
-            fecha_evento: new Date(),
-            descripcion_lugar_evento: "Coincidencia detectada en búsqueda periódica",
-            direccion_evento: "Base de datos local"
-          },
-          {
-            headers: { Authorization: `Bearer ${token}` }
-          }
-        );
-
-        // 🔹 Marcar el reporte como atendido para que no se repita
-        await pool.query(
-          'UPDATE reportes SET atendido = 1 WHERE reporte_id = ?',
-          [reporte.reporte_id]
-        );
-      }
-    }
   } catch (err) {
-    console.error("Error en búsqueda continua:", err);
+    console.error(err);
+    return res.status(500).json({ error: 'Error en el servidor', detalle: err.message });
   }
-}, intervaloMs);
+});
 
-	
 // Notificar coincidencia
 app.post('/notificar-coincidencia', validarToken, async (req, res) => {
   const { curp, nombre, primer_apellido, segundo_apellido,
@@ -281,26 +210,19 @@ app.post('/busqueda-finalizada', validarToken, (req, res) => {
 app.post('/desactivar-reporte', validarToken, async (req, res) => {
   const { id } = req.body;
 
-  // Validación básica
   if (!id) {
     return res.status(400).json({ error: 'Campo id es obligatorio' });
   }
 
-  // Validar longitud (por ahora permitimos hasta 3 dígitos, pero la especificación oficial es 36-75)
   if (id.length < 1 || id.length > 75) {
     return res.status(400).json({ error: 'El id no cumple con la longitud permitida' });
   }
 
   try {
-    // Dar de baja el caso en la tabla reportes
     await pool.query(
       `UPDATE reportes SET activo = 0 WHERE reporte_id = ?`,
       [id]
     );
-
-    // Aquí podrías detener cualquier proceso periódico asociado al id
-    // Ejemplo: limpiar intervalos si los guardas en memoria
-    // if (jobs[id]) { clearInterval(jobs[id]); delete jobs[id]; }
 
     return res.json({
       message: 'Registro de finalización de búsqueda histórica guardado correctamente'
@@ -311,8 +233,113 @@ app.post('/desactivar-reporte', validarToken, async (req, res) => {
   }
 });
 
+// 🔥 BÚSQUEDA CONTINUA GLOBAL - UNA SOLA VEZ (SOLUCIONA 502)
+let busquedaContinuaActiva = false;
+
+async function iniciarBusquedaContinua() {
+  if (busquedaContinuaActiva) {
+    console.log('🔄 Búsqueda continua ya activa');
+    return;
+  }
+
+  try {
+    const { intervalo } = await obtenerToken();
+    const intervaloMs = intervalo * 60 * 1000;
+    
+    busquedaContinuaActiva = true;
+    console.log(`🚀 Búsqueda continua iniciada - Cada ${intervalo} minutos`);
+
+    setInterval(async () => {
+      try {
+        console.log('🔍 Ejecutando búsqueda continua...');
+        const { token } = await obtenerToken();
+
+        // Buscar reportes pendientes
+        const [pendientes] = await pool.query(
+          'SELECT * FROM reportes WHERE atendido = 0 AND activo = 1'
+        );
+
+        console.log(`📊 ${pendientes.length} reportes pendientes encontrados`);
+
+        for (const reporte of pendientes) {
+          const curpPendiente = reporte.curp;
+
+          // Chequear personas
+          const [personas] = await pool.query(
+            'SELECT * FROM personas WHERE curp = ?',
+            [curpPendiente]
+          );
+
+          if (personas.length > 0) {
+            console.log(`✅ FASE 2: Coincidencia para ${curpPendiente}`);
+
+            // INSERT coincidencias (FASE 2)
+            await pool.query(
+              `INSERT INTO coincidencias 
+                (curp, nombre, primer_apellido, segundo_apellido, fecha_nacimiento, 
+                 lugar_nacimiento, sexo_asignado, telefono, fase_busqueda, tipo_evento, 
+                 fecha_evento, descripcion_lugar_evento, direccion_evento) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                curpPendiente,
+                reporte.nombre || null,
+                reporte.primer_apellido || null,
+                reporte.segundo_apellido || null,
+                reporte.fecha_nacimiento || null,
+                reporte.lugar_nacimiento || null,
+                reporte.sexo_asignado || null,
+                reporte.telefono || null,
+                "2", // FASE 2
+                "Coincidencia en búsqueda continua",
+                new Date(),
+                "Coincidencia detectada en búsqueda periódica",
+                "Base de datos local"
+              ]
+            );
+
+            // Notificar coincidencia
+            await axios.post(
+              'http://localhost:3000/notificar-coincidencia',
+              {
+                curp: curpPendiente,
+                nombre: reporte.nombre,
+                primer_apellido: reporte.primer_apellido,
+                segundo_apellido: reporte.segundo_apellido,
+                fase_busqueda: "2",
+                tipo_evento: "Coincidencia en búsqueda continua",
+                fecha_evento: new Date(),
+                descripcion_lugar_evento: "Coincidencia detectada en búsqueda periódica",
+                direccion_evento: "Base de datos local"
+              },
+              {
+                headers: { Authorization: `Bearer ${token}` }
+              }
+            ).catch(err => console.error('Error axios:', err.message));
+
+            // Marcar atendido
+            await pool.query(
+              'UPDATE reportes SET atendido = 1 WHERE reporte_id = ?',
+              [reporte.reporte_id]
+            );
+          }
+        }
+      } catch (err) {
+        console.error("❌ Error búsqueda continua:", err.message);
+      }
+    }, intervaloMs);
+
+  } catch (err) {
+    console.error("❌ Error iniciando búsqueda continua:", err.message);
+    busquedaContinuaActiva = false;
+  }
+}
+
 // Puerto dinámico
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API PUI corriendo en http://localhost:${PORT}`);
+  console.log(`\n🚀 API PUI corriendo en http://localhost:${PORT}`);
+  console.log('📋 Endpoints: /login, /activar-reporte, /notificar-coincidencia, /desactivar-reporte');
+  
+  // ✅ INICIAR BÚSQUEDA CONTINUA - UNA SOLA VEZ
+  iniciarBusquedaContinua();
 });
