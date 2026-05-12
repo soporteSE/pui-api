@@ -116,8 +116,8 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     await pool.query(
       `INSERT INTO reportes 
         (reporte_id, curp, nombre, primer_apellido, segundo_apellido, 
-         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         fecha_nacimiento, fecha_desaparicion, lugar_nacimiento, sexo_asignado, telefono, atendido, creado_en) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW())`,
       [
         id,
         curp,
@@ -158,6 +158,12 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
           "Base de datos local"
         ]
       );
+
+      // 🔹 Marcar el reporte como atendido
+      await pool.query(
+        `UPDATE reportes SET atendido = 1 WHERE reporte_id = ?`,
+        [id]
+      );
     }
 
     // Validar token vigente desde configuracion
@@ -192,7 +198,7 @@ app.post('/activar-reporte', validarToken, async (req, res) => {
     }, intervaloMs);
 
     return res.json({
-      mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada',
+      mensaje: 'Reporte activado, coincidencia guardada en tabla coincidencias si existe en personas, y búsqueda continua configurada. Reporte marcado como atendido si hubo coincidencia.',
       intervalo
     });
   } catch (err) {
